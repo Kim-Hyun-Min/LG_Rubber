@@ -1,0 +1,39 @@
+@"
+# --- Python venv ---
+.env/
+.venv/
+venv/
+env/
+
+# --- Python cache ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- outputs / artifacts ---
+runs_seg/
+runs_unet/
+pred_alpha*/
+out_brightness*/
+out_brightness_top/
+out_brightness_bot/
+simple_overlap/
+synsetic/
+synsetic_final/
+data_carbon/
+s_data/
+*.pth
+*.pt
+
+# --- raw data (필요 시 조정) ---
+data/
+data_g/
+labels/
+"@ | Set-Content -Encoding utf8 .gitignore

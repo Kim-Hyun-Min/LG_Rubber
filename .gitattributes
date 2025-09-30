@@ -1,0 +1,15 @@
+@"
+* text=auto
+
+# 코드/문서 파일은 LF
+*.py   text eol=lf
+*.sh   text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Windows 스크립트는 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+"@  Set-Content -Encoding utf8 .gitattributes
