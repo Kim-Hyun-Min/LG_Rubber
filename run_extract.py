@@ -7,7 +7,7 @@
 
 필수:
 - runs_seg/best_unet.pth (미리 학습된 가중치)
-- normalize_brightness.py, (선택) prep_rubber_crops.py, improved_rubber_stamp_stitching.py (동일 폴더)
+- normalize_brightness.py, (선택) prep_rubber_crops.py, compose_advanced.py (동일 폴더)
 """
 
 import argparse
@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # 외부 스크립트 절대경로
-SCRIPT_STITCH = ROOT / "improved_rubber_stamp_stitching.py"
+SCRIPT_STITCH = ROOT / "compose_advanced.py"
 SCRIPT_PREP   = ROOT / "prep_rubber_crops.py"
 
 # normalize_brightness 함수 직접 호출
