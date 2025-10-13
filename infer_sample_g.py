@@ -1,14 +1,17 @@
-# infer_alpha.py
-import os, glob
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os, glob, argparse
 import numpy as np
 from PIL import Image
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
 import cv2
+from pathlib import Path
 
 # -------------------------
-# UNet 정의 (train_unet.py와 동일)
+# UNet 정의
 # -------------------------
 class DoubleConv(nn.Module):
     def __init__(self, in_ch, out_ch):
@@ -52,34 +55,29 @@ class UNet(nn.Module):
 # -------------------------
 # 로드 / 추론
 # -------------------------
-def load_model(weight_path, device):
-    ckpt = torch.load(weight_path, map_location='cpu')
+def load_model(weight_path: Path, device: str):
+    ckpt = torch.load(str(weight_path), map_location='cpu')
     size = ckpt.get('size', 512)
     model = UNet().to(device)
     model.load_state_dict(ckpt['model'])
     model.eval()
     return model, size
 
-def infer_one(model, img_pil, size, device='cuda', thresh=0.5):
+@torch.inference_mode()
+def infer_one(model, img_pil: Image.Image, size: int, device='cuda', thresh=0.5):
     w, h = img_pil.size
-    img = TF.to_tensor(img_pil).unsqueeze(0)
+    img = TF.to_tensor(img_pil).unsqueeze(0)                     # (1,3,H,W) float32[0..1]
     img_resized = TF.resize(img, [size, size], antialias=True)
-    with torch.no_grad():
-        logits = model(img_resized.to(device))
-        prob = torch.sigmoid(logits)[0,0].cpu().numpy()
+    logits = model(img_resized.to(device))
+    prob = torch.sigmoid(logits)[0,0].float().cpu().numpy()
     prob = cv2.resize(prob, (w, h), interpolation=cv2.INTER_LINEAR)
-    mask01 = (prob >= thresh).astype(np.uint8)
+    mask01 = (prob >= float(thresh)).astype(np.uint8)            # 0/1
     return mask01
 
 # -------------------------
 # 마스크 후처리
 # -------------------------
 def postprocess_mask(mask01: np.ndarray, min_area=500, close_k=3):
-    """
-    mask01: (H,W) 0/1
-    - 가장 큰 성분만 남기고 노이즈 제거
-    - CLOSE 연산으로 경계 매끈화
-    """
     m = (mask01.astype(np.uint8) * 255)
     num, labels, stats, _ = cv2.connectedComponentsWithStats(m, 8)
     if num > 1:
@@ -89,48 +87,77 @@ def postprocess_mask(mask01: np.ndarray, min_area=500, close_k=3):
             area = stats[i, cv2.CC_STAT_AREA]
             if area > best_area:
                 best_area = area; best_idx = i
-        if best_idx > 0 and best_area >= min_area:
+        if best_idx > 0 and best_area >= int(min_area):
             keep[labels == best_idx] = 255
         m = keep
-    if close_k > 0:
+    if close_k and close_k > 0:
         kernel = np.ones((close_k, close_k), np.uint8)
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, kernel)
-    return (m > 127).astype(np.uint8)
+    return (m > 127).astype(np.uint8)  # 0/1
 
 # -------------------------
-# 저장 (alpha만)
+# 저장 (RGBA + whitebg 둘 다 옵션)
 # -------------------------
-def save_alpha(img_pil, mask01, out_dir, stem):
-    os.makedirs(out_dir, exist_ok=True)
-    img_np = np.array(img_pil)
+def save_outputs(img_pil, mask01, out_dir: Path, stem: str, save_rgba: bool, save_whitebg: bool):
+    out_dir.mkdir(parents=True, exist_ok=True)
     mask01 = postprocess_mask(mask01, min_area=500, close_k=3)
-    alpha = (mask01 * 255).astype(np.uint8)
-    rgba = np.dstack([img_np, alpha])   # (H,W,4)
-    Image.fromarray(rgba).save(os.path.join(out_dir, f"{stem}_alpha.png"))
+    img_np = np.array(img_pil)
+
+    if save_rgba:
+        a8 = (mask01 * 255).astype(np.uint8)
+        rgba = np.dstack([img_np, a8])
+        Image.fromarray(rgba).save(out_dir / f"{stem}_alpha.png")
+
+    if save_whitebg:
+        alpha = mask01.astype(np.float32)[..., None]
+        white_bg = np.ones_like(img_np, dtype=np.float32) * 255.0
+        out_rgb = (img_np * alpha + white_bg * (1 - alpha)).clip(0, 255).astype(np.uint8)
+        Image.fromarray(out_rgb).save(out_dir / f"{stem}_whitebg.png")
 
 # -------------------------
 # 메인
 # -------------------------
 def main():
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model, size = load_model('runs_seg/best_unet.pth', device=device)
+    ap = argparse.ArgumentParser(description="Infer alpha masks for a folder")
+    ap.add_argument("--inp", required=True, help="입력 폴더")
+    ap.add_argument("--out", required=True, help="출력 폴더")
+    ap.add_argument("--weights", default="runs_seg/best_unet.pth", help="모델 가중치 경로")
+    ap.add_argument("--device", choices=["auto","cpu","cuda"], default="auto")
+    ap.add_argument("--limit", type=int, default=0, help="앞에서 N장만 (0이면 전체)")
+    ap.add_argument("--thresh", type=float, default=0.5, help="마스크 임계값")
+    ap.add_argument("--exts", default=".jpg,.jpeg,.png,.bmp,.tif,.tiff", help="확장자 목록(쉼표)")
+    ap.add_argument("--save-rgba", action="store_true", help="RGBA(alpha) PNG 저장")
+    ap.add_argument("--save-whitebg", action="store_true", help="흰 배경 합성본 저장")
+    args = ap.parse_args()
 
-    in_dir  = 'out_brightness'   # 입력 폴더
-    out_dir = 'pred_alpha'       # 결과 폴더
-    limit   = 30                 # 앞에서 30장만
-    thresh  = 0.5
+    device = ("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else args.device
+    in_dir  = Path(args.inp)
+    out_dir = Path(args.out)
+    weight  = Path(args.weights)
 
-    exts = ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')
-    paths = [p for p in sorted(glob.glob(os.path.join(in_dir, '*'))) if p.lower().endswith(exts)]
-    paths = paths[:limit]
+    if not in_dir.exists():
+        print(f"[X] 입력 폴더 없음: {in_dir}"); return
+    if not weight.exists():
+        print(f"[X] 가중치 없음: {weight}"); return
+    if not (args.save_rgba or args.save_whitebg):
+        # 기본: RGBA 저장
+        args.save_rgba = True
 
-    print(f"Infer {len(paths)} images -> alpha PNG 저장")
-    for p in paths:
-        stem = os.path.splitext(os.path.basename(p))[0]
+    model, size = load_model(weight, device=device)
+
+    exts = tuple([e.strip().lower() for e in args.exts.split(",") if e.strip()])
+    paths = [p for p in sorted(in_dir.glob("*")) if p.suffix.lower() in exts]
+    if args.limit and args.limit > 0:
+        paths = paths[:args.limit]
+
+    print(f"Infer {len(paths)} images from {in_dir} → {out_dir}")
+    for i, p in enumerate(paths, 1):
+        stem = p.stem
         img_pil = Image.open(p).convert('RGB')
-        mask01 = infer_one(model, img_pil, size=size, device=device, thresh=thresh)
-        save_alpha(img_pil, mask01, out_dir, stem)
-        print(f" -> saved: {stem}_alpha.png")
+        mask01 = infer_one(model, img_pil, size=size, device=device, thresh=args.thresh)
+        save_outputs(img_pil, mask01, out_dir, stem, save_rgba=args.save_rgba, save_whitebg=args.save_whitebg)
+        print(f"[{i:04}/{len(paths)}] saved: {stem}")
+
 
 if __name__ == "__main__":
     main()

@@ -251,7 +251,9 @@ def process_directory(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Rubber image brightness-only normalization batch tool')
-    parser.add_argument('-m', '--method', type=str, default='auto',
+    parser.add_argument('--inp', type=str, default='data', help='입력 폴더 경로')
+    parser.add_argument('--out', type=str, default='out_brightness', help='출력 폴더 경로')
+    parser.add_argument('-m', '--method', type=str, default='l-abs',
                         choices=['auto', 'clahe', 'l-fixed', 'l-histmatch', 'l-abs'],
                         help='정규화 방식 (밝기 전용)')
     # CLAHE
@@ -274,16 +276,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-     # --- 고정 경로 설정 ---
-    input_dir = Path("data")       # 입력 폴더 이름
-    output_dir = Path("out_brightness")     # 출력 폴더 이름
-    method = "l-abs"                         # 원하는 방식: auto / clahe / l-fixed / l-histmatch / l-abs
-    reference_path = None                   # l-histmatch 쓸 때만 지정
+    
+    input_dir = Path(args.inp)
+    output_dir = Path(args.out)
+    reference_path = Path(args.reference) if args.reference else None
 
     process_directory(
         input_dir=input_dir,
         output_dir=output_dir,
-        method=method,
+        method=args.method,
         clip_limit=args.clip_limit,
         tile_grid_size=args.tile_grid,
         reference_path=reference_path,
